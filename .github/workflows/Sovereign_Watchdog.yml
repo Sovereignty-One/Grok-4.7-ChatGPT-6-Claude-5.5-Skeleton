@@ -1,0 +1,69 @@
+name: Repository Watchdog
+
+on:
+  push:
+    branches: [main, Claude, GPT/Codex, ara-hardened, copilot/main, Collaboration, Grok, duckAI, devassist420]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-watchdog-${{ github.ref }}  # concurrency group
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Repository Watchdog (visible)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Watchdog startup — visible
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SHA="${{ github.sha }}"
+          printf 'WATCHDOG_STATUS=STARTED\n'
+          printf 'WATCHDOG_EVENT=%s\n' "${{ github.event_name }}"
+          printf 'WATCHDOG_RUN_ID=%s\n' "${{ github.run_id }}"
+          printf 'FULL_SHA=%s\n' "$SHA"
+          LEN=${#SHA}
+          printf 'HEAD_SHA_LEN=%s\n' "$LEN"
+          test "$LEN" -eq 40
+          printf 'HATCH=OPEN\n'
+          printf 'PAYLOAD_ENTERED=true\n'
+      - name: Checkout without external action
+        env:
+          GH_TOKEN: ${{ github.token }}  # token
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init .
+          git remote add origin "https://github.com/${{ github.repository }}.git"
+          auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 | tr -d '\n')"
+          git -c http.extraheader="AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "${{ github.sha }}"
+          git checkout --detach FETCH_HEAD
+          git config --unset-all http.extraheader || true
+      - name: Verify runner contracts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for workflow in ci.yml ci-sovereign.yml python-ci.yml Quart.yml; do
+            if grep -Eq 'runs-on:' ".github/workflows/$workflow"; then
+              echo "runs-on contract present in $workflow"
+            else
+              echo "missing runs-on in $workflow"
+              exit 1
+            fi
+          done
+          echo 'RUNNER_CONTRACTS=PASS'
+      - name: Final watchdog result — visible
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SHA="${{ github.sha }}"
+          printf 'WATCHDOG_STATUS=PASS\n'
+          printf 'FULL_SHA=%s\n' "$SHA"
+          printf 'HATCH=OPEN\n'
+          printf 'PAYLOAD_ENTERED=true\n'
+          printf 'WATCHDOG_RESULT=VISIBLE_LOCAL_RUNNER_CONTRACTS_VERIFIED\n'

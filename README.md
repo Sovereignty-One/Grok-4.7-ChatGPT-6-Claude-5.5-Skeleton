@@ -1,9 +1,6 @@
-[![OAUTH-API-GENERATOR](https://github.com/Sovereignty-One/SuperGrok-Heavy-4-2-Skeleton/actions/workflows/oauth-api-generator.yml/badge.svg)](https://github.com/Sovereignty-One/SuperGrok-Heavy-4-2-Skeleton/actions/workflows/oauth-api-generator.yml)
+# @claude
 
-[![NowSecure Mobile SBOM](https://github.com/Sovereignty-One/SuperGrok-Heavy-4-2-Skeleton/actions/workflows/nowsecure-mobile-sbom.yml/badge.svg)](https://github.com/Sovereignty-One/SuperGrok-Heavy-4-2-Skeleton/actions/workflows/nowsecure-mobile-sbom.yml)
-# @claude @codex @copilot @grok
-
-This is the main dedicated branch. All changes by Claude Grok/Ara GPT/Codex Copilot must be made in their dedicated branch.
+This is Claude's dedicated branch. All changes by Claude must be made here.
 Do not push directly to main. Create a Pull Request for review.
 
 ---

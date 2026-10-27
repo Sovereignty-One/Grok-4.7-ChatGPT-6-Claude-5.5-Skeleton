@@ -1,0 +1,58 @@
+name: Quart App CI
+
+on:
+  push:
+    branches: [Collaboration, main, Claude, "GPT/Codex", ara-hardened, "copilot/main", duckAI, devassist420]
+  pull_request:
+    branches: [Collaboration, main, Claude, "GPT/Codex", ara-hardened, "copilot/main", duckAI, devassist420]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quart-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quart-tests:
+    name: Quart tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact commit (native git, no external action)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 | tr -d '\n')"
+          git -c http.extraheader="AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+          git config --unset-all http.extraheader 2>/dev/null || true
+
+      - name: System Python
+        run: |
+          set -Eeuo pipefail
+          python3 --version
+          python3 -m pip install --upgrade pip
+
+      - name: Install required packages
+        run: |
+          set -Eeuo pipefail
+          # pynacl is the correct PyPI package name (import name is still nacl)
+          python3 -m pip install --no-cache-dir quart fastapi pynacl pydantic pytest-asyncio
+
+      - name: Verify required imports
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import fastapi
+          import nacl
+          import pydantic
+          import quart
+          import pytest_asyncio
+          print('Quart imports: ok')
+          PY

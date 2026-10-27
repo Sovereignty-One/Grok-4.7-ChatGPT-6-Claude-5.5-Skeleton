@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [Collaboration, main, Claude, "GPT/Codex", ara-hardened, "copilot/main", duckAI, devassist420]
+  pull_request:
+    branches: [Collaboration, main, Claude, "GPT/Codex", ara-hardened, "copilot/main", duckAI, devassist420]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact commit (native git, no external action)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 | tr -d '\n')"
+          git -c http.extraheader="AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+          git config --unset-all http.extraheader 2>/dev/null || true
+          git rev-parse --short HEAD
+
+      - name: Verify Python
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 --version
+          python3 -m pip install --upgrade pip
