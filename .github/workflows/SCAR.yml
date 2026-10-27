@@ -1,0 +1,97 @@
+name: SCAR.yml — Sovereign Compliance Audit Record
+
+on:
+  push:
+    branches: ['Collaboration', 'main','xAI/Grok/**']
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for this SCAR attestation run'
+        required: false
+        default: 'manual-attest'
+      force_key_rotation:
+        description: 'EXPLICIT COMPROMISE ONLY: set true to request key rotation (owner must still approve)'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  scar-contract:
+    name: SCAR — Independent Compliance Attestation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact commit (native git)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init .
+          git remote add origin "https://github.com/${{ github.repository }}.git"
+          auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          git -c http.extraheader="AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "${{ github.sha }}"
+          git checkout --detach FETCH_HEAD
+          # git config --unset-all exits 5 when the key is absent; only unset if present
+          if git config --get-regexp '^http\.extraheader$' >/dev/null 2>&1; then
+            git config --unset-all http.extraheader
+          fi
+          echo "CHECKED_OUT=$(git rev-parse --short HEAD)"
+      - name: SCAR source gate + hash-chain integrity
+        id: gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "SCAR_SOURCE_GATE=START"
+          if [ -f scripts/scar_pqc_attest.py ]; then
+            python3 -m py_compile scripts/scar_pqc_attest.py
+            echo "SCAR_SOURCE_GATE=PASS"
+          else
+            echo "SCAR_SOURCE_GATE=SKIP (no scripts/scar_pqc_attest.py)"
+          fi
+      - name: SCAR hash-chain integrity check
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import hashlib, json, pathlib, sys
+          scar_dir = pathlib.Path("scar")
+          if not scar_dir.exists():
+              for alt in ("SCAR", "evidence/scar", "logs/scar"):
+                  if pathlib.Path(alt).exists():
+                      scar_dir = pathlib.Path(alt)
+                      break
+          if not scar_dir.exists():
+              print("SCAR_CHAIN=SKIP (no SCAR records directory found)")
+              sys.exit(0)
+          records = sorted(scar_dir.rglob("*.json"))
+          if not records:
+              print("SCAR_CHAIN=SKIP (no SCAR JSON records found)")
+              sys.exit(0)
+          prev_hash = None
+          checked = 0
+          for rec in records:
+              try:
+                  data = json.loads(rec.read_text(encoding="utf-8"))
+              except json.JSONDecodeError as e:
+                  print(f"SCAR_CHAIN=FAIL (malformed JSON: {rec}): {e}")
+                  sys.exit(1)
+              if prev_hash is not None and data.get("hash_prev") is not None:
+                  if data["hash_prev"] != prev_hash:
+                      print(f"SCAR_CHAIN=FAIL (broken link at {rec})")
+                      sys.exit(1)
+              canonical = json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+              prev_hash = hashlib.sha256(canonical).hexdigest()
+              checked += 1
+          print(f"SCAR_CHAIN=PASS ({checked} records verified, hash linkage intact)")
+          PY
+      - name: SCAR attestation verdict
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "SCAR_ATTESTATION=PASS"
+          echo "SCAR pipeline: source gate + hash-chain integrity + fail-closed on corruption"

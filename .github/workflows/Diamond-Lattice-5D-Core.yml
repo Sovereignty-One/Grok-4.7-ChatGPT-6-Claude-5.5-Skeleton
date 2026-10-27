@@ -1,0 +1,95 @@
+name: Diamond Lattice 5D Core v0.1
+
+on:
+  push:
+    paths:
+      - "diamond-core/**"
+      - ".github/workflows/Diamond-Lattice-5D-Core.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "diamond-core/**"
+      - ".github/workflows/Diamond-Lattice-5D-Core.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diamond-core-v0.1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Diamond Core v0.1 Contract Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout without third-party actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          : "${GH_TOKEN:?GITHUB_TOKEN is required}"
+          : "${REPOSITORY:?GITHUB_REPOSITORY is required}"
+          : "${COMMIT_SHA:?GITHUB_SHA is required}"
+
+          rm -rf .git
+          git init .
+          git remote add origin "https://github.com/${REPOSITORY}.git"
+
+          auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 | tr -d '\n')"
+          git -c http.extraheader="AUTHORIZATION: basic ${auth}" \
+            fetch --no-tags --depth=1 origin "${COMMIT_SHA}"
+          git checkout --detach FETCH_HEAD
+
+      - name: Runner contract
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "${CI:-}" = true
+          test "${RUNNER_OS:-}" = Linux
+
+          case "${RUNNER_ARCH:-}" in
+            X64|ARM64)
+              ;;
+            *)
+              echo "Unsupported runner architecture: ${RUNNER_ARCH:-unknown}"
+              exit 1
+              ;;
+          esac
+
+          printf 'runner=%s/%s kernel=%s commit=%s\n' \
+            "${RUNNER_OS}" "${RUNNER_ARCH}" "$(uname -m)" "${COMMIT_SHA}"
+
+      - name: Rust toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          command -v cargo
+          command -v rustc
+          cargo --version
+          rustc --version
+
+      - name: Diamond Core tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -f diamond-core/Cargo.toml
+          cargo test --manifest-path diamond-core/Cargo.toml --all-targets
+
+      - name: Contract certification
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo 'DIAMOND_LATTICE_V0_1=PASS'
+          echo "Validated commit: ${COMMIT_SHA}"

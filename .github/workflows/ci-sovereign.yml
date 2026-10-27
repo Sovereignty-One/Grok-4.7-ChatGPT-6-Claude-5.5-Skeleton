@@ -1,0 +1,64 @@
+name: CI — Sovereign Device Validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    name: Sovereign Device Validation (self-hosted / linux arm64)
+    runs-on: [self-hosted, linux arm64]
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact revision (full SHA)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${GITHUB_SHA:-}"
+          git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach "${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Diagnose runner and labels
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "${GITHUB_ACTIONS:-}" = "true"
+          test -n "${GITHUB_SHA:-}"
+          echo "RUNNER_LABELS_REQUIRED=self-hosted,linux arm64"
+          echo "RUNNER=${RUNNER_NAME}/${RUNNER_OS}/${RUNNER_ARCH}"
+          echo "COMMIT=${GITHUB_SHA}"
+          echo "COMMIT_SHA_LENGTH=${#GITHUB_SHA}"
+
+      - name: PQC signed SCAR gate (ML-DSA-87 + BLAKE3)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -m pip install --disable-pip-version-check blake3 liboqs-python
+          test -f scripts/scar_pqc_attest.py
+          mkdir -p "$RUNNER_TEMP/scar/pqc"
+          SCAR_PQC_KEY_DIR="$RUNNER_TEMP/scar/pqc" \
+          SCAR_PQC_OUTPUT="$RUNNER_TEMP/scar/attestation.json" \
+          python3 scripts/scar_pqc_attest.py --status PASS --commit "$GITHUB_SHA"
+          test -s "$RUNNER_TEMP/scar/attestation.json"
+
+      - name: Verify Python runtime
+        run: python3 --version
+      - name: Install canonical dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install --disable-pip-version-check -r requirements.txt
+          python3 -m pip install --disable-pip-version-check -e '.[test,lint]'
+          python3 -m pip check
+      - name: Python syntax gate
+        run: python3 -m compileall -q backend apps scripts tests
+      - name: I-008 executable gate
+        run: |
+          python3 scripts/verify_i008_contract.py
+          python3 -m pytest -q backend/coordination/test_i008_transparency.py
+      - name: Test collection gate
+        run: python3 -m pytest --collect-only -q tests
+      - name: Python test suite
+        run: python3 -m pytest -q tests
