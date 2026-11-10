@@ -1,0 +1,205 @@
+{
+  "contract": "SOVEREIGNTY_COMPANY_PIPES/1.0",
+  "status": "INTEGRATION_CONTRACT_ONLY_UNTIL_RUNTIME_BINDING_AND_TEST_RECEIPTS",
+  "invariants": {
+    "provider_isolation": "one adapter, credential scope, memory namespace, and evidence stream per company lane",
+    "devassist420": "separate coordinator/translator; never authority",
+    "authority": "GateOne + Sovereignty-AI-Gate policy boundary",
+    "council": "evaluation only; never authorization",
+    "honeypot": "isolated deception sensor; no production credentials or trusted data",
+    "watchdog": "independent read-only health/integrity monitor",
+    "scar": "append-only evidence sink",
+    "network": "LOCAL/HYBRID/ONLINE only through explicit policy and per-lane egress allowlist",
+    "promotion": "agent branch -> review -> Collaboration -> validation -> owner-approved main/release"
+  },
+  "provider_lanes": [
+    {
+      "id": "pipe-01",
+      "company": "OpenAI",
+      "provider": "openai",
+      "adapter_id": "openai",
+      "isolation_scope": "openai",
+      "state": "ADAPTER_BINDING_REQUIRED"
+    },
+    {
+      "id": "pipe-02",
+      "company": "Anthropic",
+      "provider": "anthropic",
+      "adapter_id": "anthropic",
+      "isolation_scope": "anthropic",
+      "state": "ADAPTER_BINDING_REQUIRED"
+    },
+    {
+      "id": "pipe-03",
+      "company": "xAI",
+      "provider": "xai",
+      "adapter_id": "xai",
+      "isolation_scope": "xai",
+      "state": "ADAPTER_BINDING_REQUIRED"
+    },
+    {
+      "id": "pipe-04",
+      "company": "GitHub",
+      "provider": "github",
+      "adapter_id": "github-copilot",
+      "isolation_scope": "github",
+      "state": "ADAPTER_BINDING_REQUIRED"
+    },
+    {
+      "id": "pipe-05",
+      "company": "DuckAI",
+      "provider": "duckai",
+      "adapter_id": "duckai",
+      "isolation_scope": "duckai",
+      "state": "ADAPTER_BINDING_REQUIRED"
+    },
+    {
+      "id": "pipe-06",
+      "company": null,
+      "provider": null,
+      "adapter_id": null,
+      "isolation_scope": "company-06",
+      "state": "UNASSIGNED_FAIL_CLOSED"
+    },
+    {
+      "id": "pipe-07",
+      "company": null,
+      "provider": null,
+      "adapter_id": null,
+      "isolation_scope": "company-07",
+      "state": "UNASSIGNED_FAIL_CLOSED"
+    },
+    {
+      "id": "pipe-08",
+      "company": null,
+      "provider": null,
+      "adapter_id": null,
+      "isolation_scope": "company-08",
+      "state": "UNASSIGNED_FAIL_CLOSED"
+    },
+    {
+      "id": "pipe-09",
+      "company": null,
+      "provider": null,
+      "adapter_id": null,
+      "isolation_scope": "company-09",
+      "state": "UNASSIGNED_FAIL_CLOSED"
+    },
+    {
+      "id": "pipe-10",
+      "company": null,
+      "provider": null,
+      "adapter_id": null,
+      "isolation_scope": "company-10",
+      "state": "UNASSIGNED_FAIL_CLOSED"
+    }
+  ],
+  "control_planes": {
+    "coordinator": {
+      "component": "DevAssist420",
+      "role": "translation_and_dispatch_only",
+      "authority": false
+    },
+    "authorization": {
+      "components": [
+        "GateOne",
+        "Sovereignty-AI-Gate"
+      ],
+      "role": "task_bound_policy_decision"
+    },
+    "execution": {
+      "components": [
+        "registered_company_adapters"
+      ],
+      "role": "provider_specific_execution"
+    },
+    "watchdog": {
+      "component": "independent_watchdog",
+      "role": "read_only_integrity_and_health"
+    },
+    "honeypot": {
+      "component": "isolated_honeypot",
+      "role": "deception_events_only"
+    },
+    "evidence": {
+      "component": "SCAR",
+      "role": "append_only_attributed_evidence"
+    }
+  },
+  "repositories": [
+    {
+      "repo": "Sovereignty-AI-Studio_v1.0.1",
+      "role": "integration_host_dashboard_runtime_registry"
+    },
+    {
+      "repo": "gateone",
+      "role": "task_authorization_and_identity"
+    },
+    {
+      "repo": "ISO-UNC-AI",
+      "role": "independent_validation_and_compliance"
+    },
+    {
+      "repo": "Grok-4.7-ChatGPT-6.1-Claude-5.5-Skeleton",
+      "role": "provider_model_router_and_runtime"
+    },
+    {
+      "repo": "mldsa-native",
+      "role": "native_post_quantum_signature_primitive"
+    },
+    {
+      "repo": "Sovereignty-AI-Gate",
+      "role": "policy_capability_enforcement"
+    },
+    {
+      "repo": "NeuralScene-iOS",
+      "role": "ios_metal_client_visual_runtime"
+    },
+    {
+      "repo": "every-cloud-for-everyone",
+      "role": "client_side_encryption_and_cloud_sealing"
+    },
+    {
+      "repo": "Genesis",
+      "role": "event_origin_and_route_envelope"
+    },
+    {
+      "repo": "Git-Sovereign",
+      "role": "governed_git_operations"
+    },
+    {
+      "repo": "Sovereignty-AI-Gate_DevAssist420",
+      "role": "separate_local_execution_coordinator"
+    },
+    {
+      "repo": "Sovereignty-Risk-Engine-Runtime-Assurance",
+      "role": "risk_decision_and_runtime_assurance"
+    }
+  ],
+  "required_receipt_fields": [
+    "who",
+    "what",
+    "when",
+    "where",
+    "why",
+    "how",
+    "authorization",
+    "memory_loaded",
+    "network_accessed",
+    "files_changed",
+    "result",
+    "source_commit",
+    "policy_version",
+    "evidence_digest"
+  ],
+  "activation_gate": [
+    "adapter_contract_verified",
+    "task_bound_authorization_verified",
+    "credential_scope_isolated",
+    "egress_policy_verified",
+    "syntax_checks_pass",
+    "unit_and_integration_tests_pass",
+    "SCAR_receipt_verified",
+    "watchdog_observes_runtime"
+  ]
+}
