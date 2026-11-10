@@ -1,12 +1,12 @@
-FROM python:3.11-slim
+FROM python:3.13
 
 WORKDIR /app
 
 RUN pip install --no-cache-dir \
-    fastapi==0.136.1 \
-    uvicorn==0.47.0 \
-    pydantic==2.13.3 \
-    blake3==0.4.1
+    fastapi==0.141.1 \
+    uvicorn==0.52.4 \
+    pydantic==2.13.4 \
+    blake3==1.0.9
 
 COPY backend.py secure_enclave.py ./
 

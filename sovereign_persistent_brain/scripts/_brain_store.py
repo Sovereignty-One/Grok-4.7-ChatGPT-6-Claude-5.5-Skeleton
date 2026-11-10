@@ -14,6 +14,8 @@ from typing import Any
 _LOCK = threading.Lock()
 _BRAIN_FILE = Path.home() / ".sg_brain.json"
 _SIGNING_KEY_FILE = Path.home() / ".sg_brain_signing.key"
+_SIGNING_KEY_ENV = "SG_BRAIN_SIGNING_KEY"
+_SIGNING_KEY_FILE_ENV = "SG_BRAIN_SIGNING_KEY_FILE"
 _AGENTS_FILE = Path("brain") / "agents.json"
 
 
@@ -51,22 +53,44 @@ def save_brain(data: dict[str, Any]) -> dict[str, Any]:
 
 def load_signing_key() -> bytes:
     with _LOCK:
-        if _SIGNING_KEY_FILE.exists():
+        env_key = os.environ.get(_SIGNING_KEY_ENV, "").strip()
+        if env_key:
             try:
-                raw = bytes.fromhex(_SIGNING_KEY_FILE.read_text("utf-8").strip())
-                if raw:
-                    return raw
-            except (ValueError, OSError):
-                # Invalid/corrupt key file or unreadable file; fall back to generating a new key below.
-                pass
-        key = secrets.token_bytes(32)
-        _SIGNING_KEY_FILE.write_text(key.hex(), "utf-8")
-        return key
+                raw = bytes.fromhex(env_key)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"{_SIGNING_KEY_ENV} must be a valid hex-encoded key."
+                ) from exc
+            if not raw:
+                raise RuntimeError(f"{_SIGNING_KEY_ENV} is set but empty.")
+            return raw
+
+        configured_key_path = os.environ.get(_SIGNING_KEY_FILE_ENV, "").strip()
+        key_path = Path(configured_key_path).expanduser() if configured_key_path else _SIGNING_KEY_FILE
+        if not key_path.exists():
+            raise FileNotFoundError(
+                "Persistent signing key is missing. Configure "
+                f"{_SIGNING_KEY_ENV} or mount/create a key file at {key_path} "
+                f"(override path with {_SIGNING_KEY_FILE_ENV})."
+            )
+
+        try:
+            raw = bytes.fromhex(key_path.read_text("utf-8").strip())
+        except (ValueError, OSError) as exc:
+            raise RuntimeError(
+                f"Persistent signing key file {key_path} is unreadable or contains invalid hex."
+            ) from exc
+        if not raw:
+            raise RuntimeError(f"Persistent signing key file {key_path} is empty.")
+        return raw
 
 
 def save_signing_key(key: bytes) -> None:
     with _LOCK:
-        _SIGNING_KEY_FILE.write_text(key.hex(), "utf-8")
+        configured_key_path = os.environ.get(_SIGNING_KEY_FILE_ENV, "").strip()
+        key_path = Path(configured_key_path).expanduser() if configured_key_path else _SIGNING_KEY_FILE
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        key_path.write_text(key.hex(), "utf-8")
 
 
 def ensure_agents_file(agents: list[dict[str, Any]]) -> None:

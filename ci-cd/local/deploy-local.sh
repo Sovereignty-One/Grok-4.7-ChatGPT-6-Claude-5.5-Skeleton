@@ -10,15 +10,18 @@ if [ -f "${CONFIG_FILE}" ]; then
   source "${CONFIG_FILE}"
 fi
 
-ENABLE_DEPLOY="${ENABLE_DEPLOY:-1}"
-ENABLE_EXPORT_ARCHIVE="${ENABLE_EXPORT_ARCHIVE:-1}"
-ENABLE_MIRROR_PUSH="${ENABLE_MIRROR_PUSH:-1}"
+# Safe-by-default: this script must not deploy, export, or push unless the
+# caller explicitly opts in through the environment or local-cicd.env.
+ENABLE_DEPLOY="${ENABLE_DEPLOY:-0}"
+ENABLE_EXPORT_ARCHIVE="${ENABLE_EXPORT_ARCHIVE:-0}"
+ENABLE_MIRROR_PUSH="${ENABLE_MIRROR_PUSH:-0}"
 EXPORT_URL="${EXPORT_URL:-http://127.0.0.1:9899/compliance/export}"
 EXPORT_DIR="${EXPORT_DIR:-${REPO_ROOT}/.local-cicd-exports}"
 EXPORT_RETENTION="${EXPORT_RETENTION:-10}"
 TARGET_REMOTE_NAME="${TARGET_REMOTE_NAME:-sovereignty-ai-studio}"
 TARGET_REPO_URL="${TARGET_REPO_URL:-git@github.com:Appel420/Sovereignty-AI-Studio.git}"
 TARGET_BRANCH="${TARGET_BRANCH:-$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD)}"
+CONFIRM_MIRROR_PUSH="${CONFIRM_MIRROR_PUSH:-}"
 WAIT_RETRIES="${WAIT_RETRIES:-30}"
 WAIT_SECONDS="${WAIT_SECONDS:-2}"
 
@@ -125,12 +128,20 @@ archive_export() {
 }
 
 run_mirror_push() {
-  local existing_url=""
+  if [ "${CONFIRM_MIRROR_PUSH}" != "YES" ]; then
+    error "Mirror push blocked. Set CONFIRM_MIRROR_PUSH=YES explicitly."
+    exit 1
+  fi
   if [ -z "${TARGET_BRANCH}" ] || [ "${TARGET_BRANCH}" = "HEAD" ]; then
     error "Unable to detect a checked-out branch. Set TARGET_BRANCH before ENABLE_MIRROR_PUSH=1 when running from detached HEAD."
     exit 1
   fi
+  if [ "${TARGET_BRANCH}" = "main" ]; then
+    error "Mirror push to main is blocked. Use a dedicated branch and pull request."
+    exit 1
+  fi
 
+  local existing_url=""
   if ! existing_url="$(git -C "${REPO_ROOT}" remote get-url "${TARGET_REMOTE_NAME}" 2>/dev/null)"; then
     info "Adding mirror remote '${TARGET_REMOTE_NAME}' => ${TARGET_REPO_URL}"
     git -C "${REPO_ROOT}" remote add "${TARGET_REMOTE_NAME}" "${TARGET_REPO_URL}"

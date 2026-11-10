@@ -4,6 +4,8 @@ import importlib
 import os
 from types import ModuleType
 
+from mode_policy import mode_payload
+
 _impl: ModuleType = importlib.import_module("bridge.python3_bridge")
 
 DEFAULT_AI_MAX_TOKENS = getattr(_impl, "DEFAULT_AI_MAX_TOKENS", 131072)
@@ -31,6 +33,7 @@ def build_health_payload() -> dict:
         "service": "SovereignBridge",
         "port": getattr(_impl, "DEFAULT_BRIDGE_PORT", 9897),
         "max_tokens": AI_MAX_TOKENS,
+        "mode": mode_payload(),
     }
 
 
@@ -40,7 +43,9 @@ def build_connect_payload() -> dict:
         "service": "SovereignBridge",
         "port": getattr(_impl, "DEFAULT_BRIDGE_PORT", 9897),
         "max_tokens": AI_MAX_TOKENS,
+        "mode": mode_payload(),
     }
+
 
 __all__ = [
     "AI_MAX_TOKENS",

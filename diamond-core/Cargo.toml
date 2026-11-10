@@ -1,0 +1,15 @@
+[package]
+name = "diamond-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Contract-first Diamond Lattice 5D sovereign memory core"
+
+[dependencies]
+blake3 = "1.8"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+
+[lib]
+path = "src/lib.rs"

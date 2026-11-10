@@ -6,6 +6,8 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from mode_policy import mode_payload
+
 DEFAULT_AI_MAX_TOKENS = 131072
 DEFAULT_BRIDGE_PORT = int(os.getenv("SG_PORT", os.getenv("PORT", "9897")))
 STATE_FILE = Path(os.getenv("SG_STATE_FILE", "./data/sg_state.json"))
@@ -32,6 +34,7 @@ def build_health_payload() -> dict:
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "port": DEFAULT_BRIDGE_PORT,
         "max_tokens": AI_MAX_TOKENS,
+        "mode": mode_payload(),
     }
 
 
@@ -41,6 +44,7 @@ def build_connect_payload() -> dict:
         "service": "SovereignBridge",
         "port": DEFAULT_BRIDGE_PORT,
         "max_tokens": AI_MAX_TOKENS,
+        "mode": mode_payload(),
     }
 
 
@@ -53,11 +57,6 @@ def _load_state() -> dict:
     return {"users": {}, "files": {}, "last_sync": None}
 
 
-def _save_state(state: dict) -> None:
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
-
-
 def _sync_hint() -> dict:
     state = _load_state()
     return {
@@ -68,6 +67,7 @@ def _sync_hint() -> dict:
         "last_sync": state.get("last_sync"),
         "files_tracked": len(state.get("files", {})),
         "users_tracked": len(state.get("users", {})),
+        "mode": mode_payload(),
     }
 
 
@@ -107,7 +107,7 @@ def main() -> None:
     host = os.getenv("SG_HOST", "127.0.0.1")
     port = int(os.getenv("SG_PORT", str(DEFAULT_BRIDGE_PORT)))
     server = ThreadingHTTPServer((host, port), BridgeHandler)
-    print(f"Sovereign Bridge listening on http://{host}:{port}")
+    print(f"Sovereign Bridge listening on http://{host}:{port} mode={mode_payload()['mode']}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

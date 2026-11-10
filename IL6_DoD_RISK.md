@@ -7,13 +7,13 @@ iOS hardware. This statement records the IL6 posture and the residual risk of an
 ## Posture
 
 The dashboard is built to run with **zero external callouts** (see
-`GATE_ONE_MLDSA65_MERKLE.md` and the `SovereignGuard` block in
+`GATE_ONE_MLDSA87_MERKLE.md` and the `SovereignGuard` block in
 `SGHv119_Newest.html` / `SGHv119-local.html`):
 
 - No external AI API (Anthropic / OpenAI / xAI) — hard-blocked by guard + CSP.
 - No Google, no Meta, no CDN, no remote fonts/frames/images.
 - WebSocket is inert; `fetch`/`XHR` permit **self + loopback only**.
-- All keys derived on-device; PQ gate via ML-DSA-65 + Merkle.
+- All keys derived on-device; PQ gate via ML-DSA-87 + Merkle.
 
 IL6 handles classified information up to **SECRET**. It requires a dedicated,
 isolated infrastructure with no shared tenancy and no commodity internet path.
@@ -27,7 +27,7 @@ A **single cloud dependency** (one provider, one region, one control plane) is a
 |---|---|---|
 | Availability — provider/region outage | Mission loss; no failover | App runs fully **air-gapped on-device**; cloud is optional, never required |
 | Confidentiality — shared control plane / lawful-access | Spillage of SECRET | No data leaves device; all crypto on-device; CSP `connect-src 'self'` + loopback |
-| Integrity — supply-chain of remote code (CDN/API) | Tampered runtime | No remote code; Three.js/CDN removed; Merkle + ML-DSA-65 attest the runtime |
+| Integrity — supply-chain of remote code (CDN/API) | Tampered runtime | No remote code; Three.js/CDN removed; Merkle + ML-DSA-87 attest the runtime |
 | Sovereignty — vendor key custody | Loss of key control | **No external keys** — operator-derived only (PBKDF2/HKDF, Secure Enclave) |
 | Concentration — one provider = one failure domain | Systemic IL6 outage | Architecture is provider-agnostic and offline-first; bridge is loopback-only |
 
