@@ -1,0 +1,15 @@
+{
+  "record_type": "sovereignty-license-integrity",
+  "record_version": "1.0.0",
+  "license_name": "SOVEREIGNTY LICENSE",
+  "license_version": "2.2.2",
+  "artifact_path": "LICENSES/SOVEREIGNTY-LICENSE-2.2.2.md",
+  "digest_algorithm": "SHA3-512",
+  "digest": "3582a05e9f423149044a91fc354cc7faa2c4c4816e4e222f0b5795c2dc14597afbd6b6b7ded2a02a7987083ad423bedd9b5472f7ce34a6d238c0ebc5900c4ead",
+  "byte_length": 22793,
+  "status": "DIGEST_COMPUTED_FOR_RELEASE_CANDIDATE",
+  "publication_approved": false,
+  "authority_verified": false,
+  "commercial_authorization": false,
+  "note": "Digest is for the exact release-candidate artifact bytes. This record does not establish authorship, ownership, authorization, or legal effectiveness."
+}
