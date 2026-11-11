@@ -1,0 +1,415 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereignty-one.local/schemas/chat-handoff-v1.schema.json",
+  "title": "Chat History Handoff and Recovery Record",
+  "description": "Portable provenance and recovery envelope for an AI-assisted work session. Attribution fields are not a cryptographic signature.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "handoff_id",
+    "created_at",
+    "company",
+    "model",
+    "conversation",
+    "task_state",
+    "provenance",
+    "integrity"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "handoff_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC ISO 8601 timestamp ending in Z."
+    },
+    "company": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "organization": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model_id"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_version": {
+          "type": "string"
+        },
+        "tooling": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "conversation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "conversation_id",
+        "scope",
+        "messages"
+      ],
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "enum": [
+            "full",
+            "partial",
+            "summary",
+            "external_archive"
+          ]
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/message"
+          }
+        },
+        "archive_ref": {
+          "type": "string",
+          "description": "Protected archive identifier or URI; do not place secrets in public URLs."
+        },
+        "omission_reason": {
+          "type": "string"
+        }
+      }
+    },
+    "task_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objective",
+        "status",
+        "next_action"
+      ],
+      "properties": {
+        "objective": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "not_started",
+            "in_progress",
+            "blocked",
+            "completed",
+            "rejected"
+          ]
+        },
+        "repository": {
+          "type": "string"
+        },
+        "base_branch": {
+          "type": "string"
+        },
+        "base_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{40,64}$"
+        },
+        "candidate_branch": {
+          "type": "string"
+        },
+        "candidate_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{40,64}$"
+        },
+        "changed_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "next_action": {
+          "type": "string"
+        },
+        "tests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/test_result"
+          }
+        },
+        "risks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "who",
+        "what",
+        "when",
+        "where",
+        "why",
+        "how"
+      ],
+      "properties": {
+        "who": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "actor",
+              "role"
+            ],
+            "properties": {
+              "actor": {
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "user",
+                  "author",
+                  "assistant",
+                  "agent",
+                  "reviewer",
+                  "executor",
+                  "approver",
+                  "tool"
+                ]
+              },
+              "company": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "what": {
+          "type": "string"
+        },
+        "when": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "where": {
+          "type": "string"
+        },
+        "why": {
+          "type": "string"
+        },
+        "how": {
+          "type": "string"
+        },
+        "approval_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "digest_status"
+      ],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "enum": [
+            "SHA-256",
+            "SHA3-512",
+            "BLAKE3",
+            "none"
+          ]
+        },
+        "digest": {
+          "type": "string"
+        },
+        "digest_status": {
+          "enum": [
+            "not_computed",
+            "computed_unverified",
+            "verified"
+          ]
+        },
+        "canonicalization": {
+          "type": "string"
+        },
+        "signature": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "absent",
+                "not_signed",
+                "signed_unverified",
+                "verified",
+                "invalid"
+              ]
+            },
+            "algorithm": {
+              "type": "string"
+            },
+            "signer_id": {
+              "type": "string"
+            },
+            "signed_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "signature_value": {
+              "type": "string",
+              "description": "Only include actual signature bytes/encoding; never fabricate."
+            },
+            "verification_key_ref": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "secrets_removed": {
+          "type": "boolean"
+        },
+        "personal_data_removed": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "role",
+        "content"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "role": {
+          "enum": [
+            "system",
+            "developer",
+            "user",
+            "assistant",
+            "tool"
+          ]
+        },
+        "content": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "model": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        },
+        "attachment_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "test_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "status"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "NOT_RUN",
+            "BLOCKED",
+            "STALE",
+            "UNPROVEN"
+          ]
+        },
+        "command": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "evidence_ref": {
+          "type": "string"
+        },
+        "commit_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{40,64}$"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

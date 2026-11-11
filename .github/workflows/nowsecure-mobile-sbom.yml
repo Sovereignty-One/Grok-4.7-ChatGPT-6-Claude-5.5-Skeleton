@@ -1,46 +1,97 @@
-name: "NowSecure Mobile SBOM"
+name: NowSecure Mobile SBOM
 
 on:
   push:
     branches: [main]
+    paths:
+      - "android/**"
+      - "app/**"
+      - "gradlew"
+      - "settings.gradle"
+      - "settings.gradle.kts"
+      - ".github/workflows/nowsecure-mobile-sbom.yml"
   pull_request:
     branches: [main]
+    paths:
+      - "android/**"
+      - "app/**"
+      - "gradlew"
+      - "settings.gradle"
+      - "settings.gradle.kts"
+      - ".github/workflows/nowsecure-mobile-sbom.yml"
   schedule:
-    - cron: '15 1 * * 2'
+    - cron: "15 1 * * 2"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: nowsecure-mobile-sbom-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   nowsecure:
-    name: NowSecure Mobile SBOM
+    name: Build and upload mobile SBOM
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    timeout-minutes: 30
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Check NowSecure prerequisites
         id: prerequisites
         shell: bash
         env:
           NS_TOKEN: ${{ secrets.NS_TOKEN }}
+          NOWSECURE_GROUP_ID: ${{ vars.NOWSECURE_GROUP_ID }}
         run: |
-          if [[ -x ./gradlew && -n "${NS_TOKEN:-}" ]]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
+          if [ -z "$NS_TOKEN" ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping NowSecure upload: repository secret NS_TOKEN is not configured."
+            exit 0
           fi
+          if [ -z "$NOWSECURE_GROUP_ID" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping NowSecure upload: repository variable NOWSECURE_GROUP_ID is not configured."
+            exit 0
+          fi
+          if [ ! -x ./gradlew ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping NowSecure upload: this repository has no executable Gradle wrapper at ./gradlew."
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
 
-      - name: Build your application
+      - name: Set up Java
         if: steps.prerequisites.outputs.enabled == 'true'
-        run: ./gradlew assembleDebug
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v4.5.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
 
-      - name: NowSecure upload app
+      - name: Build debug APK
+        if: steps.prerequisites.outputs.enabled == 'true'
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Locate debug APK
+        if: steps.prerequisites.outputs.enabled == 'true'
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find . -type f -path '*/build/outputs/apk/*/app-*.apk' -print -quit)"
+          if [ -z "$apk" ]; then
+            echo "::error::Gradle completed but no debug APK was produced."
+            exit 1
+          fi
+          echo "path=$apk" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SBOM to NowSecure
         if: steps.prerequisites.outputs.enabled == 'true'
         uses: nowsecure/nowsecure-sbom-action@ecb731b6f17a83fa53f756f9dae2ec7034c5ed7c
         with:
           token: ${{ secrets.NS_TOKEN }}
-          app_file: app-debug.apk
-          group_id: ${{ vars.NOWSECURE_GROUP_ID }} 
+          app_file: ${{ steps.apk.outputs.path }}
+          group_id: ${{ vars.NOWSECURE_GROUP_ID }}

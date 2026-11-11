@@ -1,449 +1,251 @@
-/**
- * SuperGrok AI Platform — KODER Frontend / Dashboard Server (Port 9898)
- *
- * Serves the KODER frontend / SGHv119.html dashboard and provides the local backend for it:
- *   GET  /health                   – health check
- *   POST /api/ai/chat              – AI proxy (Claude / GPT-4o / Grok)
- *   POST /api/execute-command      – safe terminal command execution
- *   GET  /api/memory               – list persisted memory entries
- *   POST /api/memory               – add a memory entry
- *   DELETE /api/memory/:id         – remove a memory entry
- *   GET  /api/audit                – list audit log entries
- *   POST /api/audit                – append an audit entry
- *   WS   ws://localhost:9898       – real-time channel
- *     → ping                       – responds with pong
- *     → ai_query                   – proxy AI request, stream reply back
- *     → piper_speak                – synthesise speech via Piper TTS
- *
- * Port topology:
- *   9897  Python Bridge (python3_bridge.py)  — backend AI / brain / keys
- *   9898  KODER frontend (this file)         — HTML + WS + Coder UI
- *   9899  Node.js Unified_Server.js          — REST proxy / relay
- *
- * Environment variables (all optional – keys enable live AI):
- *   PORT              server port (default 9898)
- *   ANTHROPIC_API_KEY Claude key  (sk-ant-...)
- *   OPENAI_API_KEY    OpenAI key  (sk-...)
- *   XAI_API_KEY       xAI key
- *   PIPER_BIN         path to piper binary (default: piper)
- *   DATA_DIR          directory for JSON data files (default: ./data)
- *   TLS_CERT          path to PEM certificate for HTTPS/WSS
- *   TLS_KEY           path to PEM private key for HTTPS/WSS
- *
- * Usage:
- *   node server_9898.js
- *   TLS_CERT=cert.pem TLS_KEY=key.pem node server_9898.js
- */
-
 'use strict';
 
-const http  = require('http');
+/**
+ * KODER / SGHv119 server — authenticated control plane.
+ *
+ * Public GitHub remains public. This process may call configured external AI APIs.
+ * Privileged HTTP and WebSocket operations require CONTROL_PLANE_TOKEN.
+ * There is intentionally no anonymous/root-role fallback.
+ */
+const http = require('http');
 const https = require('https');
-const fs    = require('fs');
-const path  = require('path');
-const cp    = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const cp = require('child_process');
 const { URL } = require('url');
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-const PORT      = parseInt(process.env.PORT || '9898', 10);
-const DATA_DIR  = process.env.DATA_DIR || path.join(__dirname, 'data');
+const PORT = Number.parseInt(process.env.PORT || '9898', 10);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const PIPER_BIN = process.env.PIPER_BIN || 'piper';
-
+const CONTROL_PLANE_TOKEN = process.env.CONTROL_PLANE_TOKEN || '';
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
-const OPENAI_KEY    = process.env.OPENAI_API_KEY    || '';
-const XAI_KEY       = process.env.XAI_API_KEY       || '';
+const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
+const XAI_KEY = process.env.XAI_API_KEY || '';
 
-// ---------------------------------------------------------------------------
-// Data persistence helpers
-// ---------------------------------------------------------------------------
+if (CONTROL_PLANE_TOKEN.length < 32) {
+  throw new Error('CONTROL_PLANE_TOKEN is required and must be at least 32 characters');
+}
+
+function tokenEqual(a, b) {
+  const aa = Buffer.from(String(a || ''));
+  const bb = Buffer.from(String(b || ''));
+  return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
+}
+
+function bearer(req) {
+  const match = /^Bearer\s+(.+)$/i.exec(req.headers.authorization || '');
+  return match ? match[1] : '';
+}
+
+function authorized(req) {
+  return tokenEqual(bearer(req), CONTROL_PLANE_TOKEN);
+}
+
 function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
 function readJSON(name, fallback) {
   ensureDataDir();
-  const file = path.join(DATA_DIR, name);
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
-  catch (e) { /* File missing or invalid JSON — return fallback */ return fallback; }
+  try { return JSON.parse(fs.readFileSync(path.join(DATA_DIR, name), 'utf8')); }
+  catch (_) { return fallback; }
 }
 
-function writeJSON(name, data) {
+function writeJSON(name, value) {
   ensureDataDir();
-  fs.writeFileSync(path.join(DATA_DIR, name), JSON.stringify(data, null, 2));
-}
-
-// ---------------------------------------------------------------------------
-// Tiny HTTP helper — make a JSON request to an external API
-// ---------------------------------------------------------------------------
-function apiPost(url, headers, body) {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const isHttps = parsed.protocol === 'https:';
-    const transport = isHttps ? https : http;
-    const payload = JSON.stringify(body);
-    const opts = {
-      hostname: parsed.hostname,
-      port:     parsed.port || (isHttps ? 443 : 80),
-      path:     parsed.pathname + parsed.search,
-      method:   'POST',
-      headers:  {
-        'Content-Type':   'application/json',
-        'Content-Length': Buffer.byteLength(payload),
-        ...headers,
-      },
-    };
-    const req = transport.request(opts, (res) => {
-      let raw = '';
-      res.on('data', (c) => (raw += c));
-      res.on('end', () => {
-        try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
-        catch (e) { resolve({ status: res.statusCode, body: raw }); }
-      });
-    });
-    req.on('error', reject);
-    req.write(payload);
-    req.end();
-  });
-}
-
-function resolveMaxTokens(value, fallback) {
-  const n = Number.parseInt(value, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
-// ---------------------------------------------------------------------------
-// AI proxy — calls Anthropic / OpenAI / xAI depending on model
-// ---------------------------------------------------------------------------
-async function callAI(model, system, messages, maxTokens) {
-  const tokens = resolveMaxTokens(maxTokens, 131072);
-  if (model === 'claude') {
-    const key = ANTHROPIC_KEY;
-    if (!key) return { error: 'ANTHROPIC_API_KEY not set on bridge server' };
-    const r = await apiPost(
-      'https://api.anthropic.com/v1/messages',
-      { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-      { model: 'claude-opus-4-7', max_tokens: tokens, system, messages },
-    );
-    if (r.body && r.body.content && r.body.content[0]) {
-      return { text: r.body.content[0].text };
-    }
-    return { error: r.body && r.body.error ? r.body.error.message : 'Claude API error', status: r.status };
-  }
-
-  if (model === 'gpt') {
-    const key = OPENAI_KEY;
-    if (!key) return { error: 'OPENAI_API_KEY not set on bridge server' };
-    const r = await apiPost(
-      'https://api.openai.com/v1/chat/completions',
-      { Authorization: `Bearer ${key}` },
-      { model: 'gpt-5.4-mini', max_tokens: tokens, messages: [{ role: 'system', content: system }, ...messages] },
-    );
-    if (r.body && r.body.choices && r.body.choices[0]) {
-      return { text: r.body.choices[0].message.content };
-    }
-    return { error: r.body && r.body.error ? r.body.error.message : 'OpenAI API error', status: r.status };
-  }
-
-  if (model === 'grok') {
-    const key = XAI_KEY;
-    if (!key) return { error: 'XAI_API_KEY not set on bridge server' };
-    const r = await apiPost(
-      'https://api.x.ai/v1/chat/completions',
-      { Authorization: `Bearer ${key}` },
-      { model: 'grok-4.3', max_tokens: tokens, messages: [{ role: 'system', content: system }, ...messages] },
-    );
-    if (r.body && r.body.choices && r.body.choices[0]) {
-      return { text: r.body.choices[0].message.content };
-    }
-    return { error: 'Grok API error', status: r.status };
-  }
-
-  return { error: `Unknown model: ${model}` };
-}
-
-// ---------------------------------------------------------------------------
-// Safe command execution — allowlist only, fully hardcoded argv to prevent injection
-// ---------------------------------------------------------------------------
-
-// Map each allowed command string to a hardcoded [executable, ...args] tuple.
-// User input selects which entry to run; it never flows into exec arguments.
-const CMD_ALLOWLIST = new Map([
-  ['pwd',               ['pwd']],
-  ['ls',                ['ls']],
-  ['date',              ['date']],
-  ['whoami',            ['whoami']],
-  ['hostname',          ['hostname']],
-  ['uname',             ['uname']],
-  ['node --version',    ['node', '--version']],
-  ['npm --version',     ['npm', '--version']],
-  ['python3 --version', ['python3', '--version']],
-  ['python --version',  ['python', '--version']],
-]);
-
-// Commands whose first token is allowed; extra arguments are passed through
-// only after stripping shell metacharacters from each token individually.
-const SAFE_BASE_CMDS = new Set(['echo', 'cat', 'head', 'tail', 'wc', 'ls']);
-const SHELL_META_RE  = /[;&|`$<>()\\\n\r]/;
-
-function executeCommand(cmd, role) {
-  const trimmed = (cmd || '').trim();
-
-  // Try exact match in the hardcoded allowlist first
-  if (CMD_ALLOWLIST.has(trimmed)) {
-    try {
-      const argv = CMD_ALLOWLIST.get(trimmed);
-      const out  = cp.execFileSync(argv[0], argv.slice(1), { timeout: 5000, encoding: 'utf8' });
-      return { output: out, exit: 0 };
-    } catch (e) {
-      return { output: e.message, exit: e.status || 1 };
-    }
-  }
-
-  // Try safe-base-command pattern: validate each token, then exec without shell
-  const tokens = trimmed.split(/\s+/);
-  const base   = tokens[0];
-  if (SAFE_BASE_CMDS.has(base) && tokens.every(t => !SHELL_META_RE.test(t))) {
-    try {
-      const out = cp.execFileSync(base, tokens.slice(1), { timeout: 5000, encoding: 'utf8' });
-      return { output: out, exit: 0 };
-    } catch (e) {
-      return { output: e.message, exit: e.status || 1 };
-    }
-  }
-
-  return {
-    output: `[Bridge] Command restricted for role ${role || 'user'}: ${trimmed}\nAllowed: pwd, ls, date, whoami, hostname, uname, node --version, npm --version, python3 --version, echo, cat, head, tail, wc`,
-    exit:   1,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Piper TTS
-// ---------------------------------------------------------------------------
-function piperSpeak(text, ws) {
-  const clean = text.replace(/[<>]/g, '').slice(0, 500);
-  try {
-    const proc = cp.spawn(PIPER_BIN, ['--output-raw'], { stdio: ['pipe', 'pipe', 'ignore'] });
-    const chunks = [];
-    proc.stdin.write(clean);
-    proc.stdin.end();
-    proc.stdout.on('data', (c) => chunks.push(c));
-    proc.stdout.on('end', () => {
-      if (ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'audio', data: Buffer.concat(chunks).toString('base64') }));
-      }
-    });
-    proc.on('error', () => { /* piper binary not installed — skip */ });
-  } catch (e) { /* piper not installed — skip */ }
-}
-
-// ---------------------------------------------------------------------------
-// HTTP request router
-// ---------------------------------------------------------------------------
-function readBody(req) {
-  return new Promise((resolve) => {
-    let raw = '';
-    req.on('data', (c) => (raw += c));
-    req.on('end', () => {
-      try { resolve(JSON.parse(raw)); } catch (e) { /* Invalid JSON body — return empty object */ resolve({}); }
-    });
-  });
+  fs.writeFileSync(path.join(DATA_DIR, name), JSON.stringify(value, null, 2), { mode: 0o600 });
 }
 
 function respond(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
-    'Content-Type':                'application/json',
-    'Access-Control-Allow-Origin': '*',
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Access-Control-Allow-Origin': 'null',
     'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type,Authorization',
   });
   res.end(payload);
 }
 
-async function handleRequest(req, res) {
-  // CORS preflight
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin':  '*',
-      'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    });
-    return res.end();
-  }
-
-  const urlObj = new URL(req.url, `http://localhost`);
-  const urlPath = urlObj.pathname;
-  const method  = req.method;
-
-  // GET /health
-  if (method === 'GET' && urlPath === '/health') {
-    return respond(res, 200, {
-      status:    'healthy',
-      service:   'server_9898',
-      uptime:    process.uptime(),
-      ai:        { claude: !!ANTHROPIC_KEY, gpt: !!OPENAI_KEY, grok: !!XAI_KEY },
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  // POST /api/ai/chat
-  if (method === 'POST' && urlPath === '/api/ai/chat') {
-    const body = await readBody(req);
-    const { model = 'claude', system = '', messages = [], text, max_tokens } = body;
-    const msgs = messages.length ? messages : [{ role: 'user', content: text || '' }];
-    const result = await callAI(model, system, msgs, max_tokens);
-    return respond(res, result.error ? 502 : 200, result);
-  }
-
-  // POST /api/execute-command
-  if (method === 'POST' && urlPath === '/api/execute-command') {
-    const body = await readBody(req);
-    const { command = '', role = 'user' } = body;
-    const result = executeCommand(command, role);
-    return respond(res, 200, result);
-  }
-
-  // GET /api/memory
-  if (method === 'GET' && urlPath === '/api/memory') {
-    return respond(res, 200, readJSON('memory.json', []));
-  }
-
-  // POST /api/memory
-  if (method === 'POST' && urlPath === '/api/memory') {
-    const body  = await readBody(req);
-    let   items = readJSON('memory.json', []);
-    const entry = {
-      id:      Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      title:   (body.title  || 'Note').slice(0, 200),
-      content: (body.content || '').slice(0, 2000),
-      ts:      new Date().toISOString(),
-      auto:    !!body.auto,
-    };
-    items.push(entry);
-    if (items.length > 200) items = items.slice(-200);
-    writeJSON('memory.json', items);
-    return respond(res, 201, entry);
-  }
-
-  // DELETE /api/memory/:id
-  if (method === 'DELETE' && urlPath.startsWith('/api/memory/')) {
-    const id    = urlPath.slice('/api/memory/'.length);
-    const items = readJSON('memory.json', []);
-    const next  = items.filter((e) => e.id !== id);
-    writeJSON('memory.json', next);
-    return respond(res, 200, { deleted: items.length - next.length });
-  }
-
-  // GET /api/audit
-  if (method === 'GET' && urlPath === '/api/audit') {
-    return respond(res, 200, readJSON('audit.json', []));
-  }
-
-  // POST /api/audit
-  if (method === 'POST' && urlPath === '/api/audit') {
-    const body    = await readBody(req);
-    let   entries = readJSON('audit.json', []);
-    const entry   = {
-      id:      Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      action:  (body.action  || 'EVENT').slice(0, 100),
-      detail:  (body.detail  || '').slice(0, 500),
-      role:    (body.role    || '').slice(0, 60),
-      ts:      new Date().toISOString(),
-    };
-    entries.push(entry);
-    if (entries.length > 1000) entries = entries.slice(-1000);
-    writeJSON('audit.json', entries);
-    return respond(res, 201, entry);
-  }
-
-  respond(res, 404, { error: 'Not found', path: urlPath });
+function requireAuth(req, res) {
+  if (authorized(req)) return true;
+  respond(res, 401, { error: 'Unauthorized' });
+  return false;
 }
 
-// ---------------------------------------------------------------------------
-// Build HTTP(S) server
-// ---------------------------------------------------------------------------
-let server;
-if (process.env.TLS_CERT && process.env.TLS_KEY) {
-  const tlsOpts = {
-    cert: fs.readFileSync(process.env.TLS_CERT),
-    key:  fs.readFileSync(process.env.TLS_KEY),
-  };
-  server = https.createServer(tlsOpts, handleRequest);
-  console.log('[server_9898] TLS enabled');
-} else {
-  server = http.createServer(handleRequest);
+function readBody(req, limit = 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+    let size = 0;
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size <= limit) raw += chunk;
+      else reject(new Error('Request body too large'));
+    });
+    req.on('end', () => {
+      if (size > limit) return;
+      try { resolve(JSON.parse(raw || '{}')); }
+      catch (_) { reject(new Error('Invalid JSON')); }
+    });
+    req.on('error', reject);
+  });
 }
 
-// ---------------------------------------------------------------------------
-// WebSocket server — accepts connections at any path (root ws://localhost:9898)
-// ---------------------------------------------------------------------------
-let wss = null;
+function apiPost(url, headers, body) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const transport = parsed.protocol === 'https:' ? https : http;
+    const payload = JSON.stringify(body);
+    const req = transport.request({
+      hostname: parsed.hostname,
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: 'POST',
+      timeout: 30000,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...headers },
+    }, res => {
+      let raw = '';
+      res.on('data', c => { raw += c; });
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
+        catch (_) { resolve({ status: res.statusCode, body: raw }); }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('Upstream timeout')));
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+
+async function callAI(model, system, messages, maxTokens) {
+  const tokens = Math.min(Math.max(Number.parseInt(maxTokens || '4096', 10) || 4096, 1), 131072);
+  if (model === 'claude') {
+    if (!ANTHROPIC_KEY) return { error: 'ANTHROPIC_API_KEY not configured' };
+    const r = await apiPost('https://api.anthropic.com/v1/messages',
+      { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+      { model: 'claude-opus-4-7', max_tokens: tokens, system, messages });
+    return r.body?.content?.[0]?.text ? { text: r.body.content[0].text } : { error: r.body?.error?.message || 'Claude API error', status: r.status };
+  }
+  if (model === 'gpt') {
+    if (!OPENAI_KEY) return { error: 'OPENAI_API_KEY not configured' };
+    const r = await apiPost('https://api.openai.com/v1/chat/completions',
+      { Authorization: `Bearer ${OPENAI_KEY}` },
+      { model: 'gpt-5.4-mini', max_tokens: tokens, messages: [{ role: 'system', content: system }, ...messages] });
+    return r.body?.choices?.[0]?.message?.content ? { text: r.body.choices[0].message.content } : { error: r.body?.error?.message || 'OpenAI API error', status: r.status };
+  }
+  if (model === 'grok') {
+    if (!XAI_KEY) return { error: 'XAI_API_KEY not configured' };
+    const r = await apiPost('https://api.x.ai/v1/chat/completions',
+      { Authorization: `Bearer ${XAI_KEY}` },
+      { model: 'grok-4.3', max_tokens: tokens, messages: [{ role: 'system', content: system }, ...messages] });
+    return r.body?.choices?.[0]?.message?.content ? { text: r.body.choices[0].message.content } : { error: r.body?.error?.message || 'xAI API error', status: r.status };
+  }
+  return { error: 'Unknown model' };
+}
+
+const COMMANDS = new Map([
+  ['pwd', ['pwd']], ['ls', ['ls']], ['date', ['date']], ['whoami', ['whoami']],
+  ['hostname', ['hostname']], ['uname', ['uname']], ['node --version', ['node', '--version']],
+  ['npm --version', ['npm', '--version']], ['python3 --version', ['python3', '--version']],
+  ['python --version', ['python', '--version']],
+]);
+const SAFE_BASE = new Set(['echo', 'cat', 'head', 'tail', 'wc', 'ls']);
+const SHELL_META = /[;&|`$<>()\\\n\r]/;
+
+function executeCommand(command) {
+  const value = String(command || '').trim();
+  if (COMMANDS.has(value)) {
+    const [bin, ...args] = COMMANDS.get(value);
+    try { return { output: cp.execFileSync(bin, args, { timeout: 5000, encoding: 'utf8' }), exit: 0 }; }
+    catch (e) { return { output: e.message, exit: e.status || 1 }; }
+  }
+  const tokens = value ? value.split(/\s+/) : [];
+  if (tokens.length && SAFE_BASE.has(tokens[0]) && tokens.every(t => !SHELL_META.test(t))) {
+    try { return { output: cp.execFileSync(tokens[0], tokens.slice(1), { timeout: 5000, encoding: 'utf8' }), exit: 0 }; }
+    catch (e) { return { output: e.message, exit: e.status || 1 }; }
+  }
+  return { output: 'Command denied by execution allowlist', exit: 1 };
+}
+
+async function handle(req, res) {
+  if (req.method === 'OPTIONS') return respond(res, 204, {});
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+
+  if (req.method === 'GET' && url.pathname === '/health') {
+    return respond(res, 200, { status: 'healthy', service: 'server_9898', control_plane: 'authenticated', timestamp: new Date().toISOString() });
+  }
+  if (!requireAuth(req, res)) return;
+
+  try {
+    if (req.method === 'POST' && url.pathname === '/api/ai/chat') {
+      const body = await readBody(req);
+      const messages = Array.isArray(body.messages) && body.messages.length ? body.messages : [{ role: 'user', content: String(body.text || '') }];
+      const result = await callAI(body.model || 'claude', String(body.system || ''), messages, body.max_tokens);
+      return respond(res, result.error ? 502 : 200, result);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/execute-command') {
+      const body = await readBody(req);
+      return respond(res, 200, executeCommand(body.command));
+    }
+    if (req.method === 'GET' && url.pathname === '/api/memory') return respond(res, 200, readJSON('memory.json', []));
+    if (req.method === 'POST' && url.pathname === '/api/memory') {
+      const body = await readBody(req);
+      const items = readJSON('memory.json', []);
+      const entry = { id: crypto.randomUUID(), title: String(body.title || 'Note').slice(0, 200), content: String(body.content || '').slice(0, 2000), ts: new Date().toISOString(), auto: Boolean(body.auto) };
+      items.push(entry); writeJSON('memory.json', items.slice(-200)); return respond(res, 201, entry);
+    }
+    if (req.method === 'DELETE' && url.pathname.startsWith('/api/memory/')) {
+      const id = url.pathname.slice('/api/memory/'.length); const items = readJSON('memory.json', []); const next = items.filter(e => e.id !== id);
+      writeJSON('memory.json', next); return respond(res, 200, { deleted: items.length - next.length });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/audit') return respond(res, 200, readJSON('audit.json', []));
+    if (req.method === 'POST' && url.pathname === '/api/audit') {
+      const body = await readBody(req); const entries = readJSON('audit.json', []);
+      const entry = { id: crypto.randomUUID(), action: String(body.action || 'EVENT').slice(0, 100), detail: String(body.detail || '').slice(0, 500), ts: new Date().toISOString() };
+      entries.push(entry); writeJSON('audit.json', entries.slice(-1000)); return respond(res, 201, entry);
+    }
+    const dashboard = path.join(__dirname, 'SGHv119.html');
+    if (req.method === 'GET' && url.pathname === '/') {
+      if (!fs.existsSync(dashboard)) return respond(res, 404, { error: 'Dashboard not found' });
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(fs.readFileSync(dashboard));
+    }
+    return respond(res, 404, { error: 'Not found' });
+  } catch (e) {
+    return respond(res, 400, { error: e.message });
+  }
+}
+
+const createServer = process.env.TLS_CERT && process.env.TLS_KEY
+  ? https.createServer({ cert: fs.readFileSync(process.env.TLS_CERT), key: fs.readFileSync(process.env.TLS_KEY) }, handle)
+  : http.createServer(handle);
+
+let wss;
 try {
   const { WebSocketServer } = require('ws');
-  wss = new WebSocketServer({ server });
-  const clients = new Set();
-
-  wss.on('connection', (ws) => {
-    clients.add(ws);
-    console.log(`[ws] client connected (${clients.size} total)`);
-
-    ws.on('close', () => {
-      clients.delete(ws);
-      console.log(`[ws] client disconnected (${clients.size} total)`);
-    });
-
-    ws.on('message', async (raw) => {
-      let msg;
-      try { msg = JSON.parse(raw); } catch (e) { /* Malformed WebSocket message — ignore */ return; }
-
-      switch (msg.type) {
-        case 'ping':
-          ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
-          break;
-
-        case 'ai_query': {
-          const { text = '', model = 'claude', system = '' } = msg;
-          const result = await callAI(model, system, [{ role: 'user', content: text }]);
-          if (ws.readyState === 1) {
-            ws.send(JSON.stringify({
-              type:  'ai_response',
-              model,
-              text:  result.text  || '',
-              error: result.error || null,
-            }));
-          }
-          break;
-        }
-
-        case 'piper_speak':
-          if (msg.text) piperSpeak(msg.text, ws);
-          break;
-
-        default:
-          break;
+  wss = new WebSocketServer({ server: createServer });
+  wss.on('connection', (ws, req) => {
+    if (!tokenEqual(bearer(req), CONTROL_PLANE_TOKEN)) return ws.close(1008, 'Unauthorized');
+    ws.on('message', async raw => {
+      let msg; try { msg = JSON.parse(raw); } catch (_) { return ws.send(JSON.stringify({ type: 'error', error: 'Invalid JSON' })); }
+      if (msg.type === 'ping') return ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
+      if (msg.type === 'ai_query') {
+        const result = await callAI(msg.model || 'claude', String(msg.system || ''), [{ role: 'user', content: String(msg.text || '') }]);
+        return ws.send(JSON.stringify({ type: 'ai_response', model: msg.model || 'claude', text: result.text || '', error: result.error || null }));
+      }
+      if (msg.type === 'piper_speak') {
+        const clean = String(msg.text || '').replace(/[<>]/g, '').slice(0, 500);
+        const proc = cp.spawn(PIPER_BIN, ['--output-raw'], { stdio: ['pipe', 'pipe', 'ignore'] });
+        const chunks = []; proc.stdout.on('data', c => chunks.push(c)); proc.stdout.on('end', () => ws.send(JSON.stringify({ type: 'audio', data: Buffer.concat(chunks).toString('base64') })));
+        proc.on('error', () => ws.send(JSON.stringify({ type: 'error', error: 'Piper unavailable' })));
+        proc.stdin.end(clean);
       }
     });
   });
-
-  console.log('[server_9898] WebSocket support enabled');
 } catch (e) {
-  console.warn('[server_9898] WebSocket unavailable (install ws): ' + e.message);
+  console.error('[server_9898] WebSocket disabled:', e.message);
 }
 
-// ---------------------------------------------------------------------------
-// Start
-// ---------------------------------------------------------------------------
-if (require.main === module) {
-  server.listen(PORT, () => {
-    const proto = (process.env.TLS_CERT && process.env.TLS_KEY) ? 'wss' : 'ws';
-    console.log(`[server_9898] listening on http://localhost:${PORT}`);
-    console.log(`[server_9898] WebSocket   ${proto}://localhost:${PORT}`);
-    console.log(`[server_9898] AI keys loaded: claude=${!!ANTHROPIC_KEY} gpt=${!!OPENAI_KEY} grok=${!!XAI_KEY}`);
-    console.log(`[server_9898] Data dir: ${DATA_DIR}`);
-  });
-}
-
-module.exports = { server, wss, callAI, executeCommand };
+createServer.listen(PORT, '0.0.0.0', () => console.log(`[server_9898] listening on ${PORT}; control plane authenticated`));

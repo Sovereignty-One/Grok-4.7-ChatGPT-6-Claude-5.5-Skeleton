@@ -1,0 +1,49 @@
+{
+  "schema_version": "sovereignty.chain-of-command.consumer.v1",
+  "repository": "AppelJr/Grok-4.7-ChatGPT-6.1-Claude-5.5-Skeleton",
+  "integration_role": "runtime_host",
+  "contract_owner": "AppelJr/Sovereignty-AI-Studio_v1.0.1",
+  "canonical_implementation_ref": "agent/chain-of-command-heavy-judge-20261107",
+  "consumer_branch": "agent/chain-of-command-consumer-20261107",
+  "integration_status": "DECLARED",
+  "test_status": "NOT_RUN",
+  "contract_summary": "Provider runtime host",
+  "responsibility": "Hosts provider adapters and bus transport. Must call the Studio chain contract; isolate Grok, GPT/Codex, and Claude lanes; preserve provider provenance; never bypass Gate or Heavy Judge.",
+  "inbound_contract": {
+    "required_fields": [
+      "request_id",
+      "task_id",
+      "owner_id",
+      "device_id",
+      "scope",
+      "policy_hash",
+      "route_id"
+    ],
+    "authorization": "verified Sovereignty Gate proof required before protected work"
+  },
+  "outbound_contract": {
+    "permitted_fields": [
+      "judge_verdict_id",
+      "output_hash",
+      "signature_ref",
+      "scar_event_id",
+      "repmhl_record_id",
+      "status"
+    ],
+    "release_rule": "PASS only; YANK means escrow and output withheld; REWRITE requires full revalidation"
+  },
+  "invariants": [
+    "Orchestrator is not authority",
+    "Council votes are not authorization",
+    "Voice is not identity",
+    "No component may bypass the pre-route Gate or post-judge release Gate",
+    "SCAR/REPMHL evidence failure blocks release",
+    "No secrets or raw credentials in audit events"
+  ],
+  "evidence": {
+    "source_repository_root_inspected": true,
+    "adapter_implemented": false,
+    "cross_repository_test_executed": false,
+    "note": "This declaration records the repository's integration boundary; it does not claim executable wiring."
+  }
+}
