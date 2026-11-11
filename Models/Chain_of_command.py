@@ -1,4 +1,3 @@
-chain_of_command.py
 #!/usr/bin/env python3
 
 """
@@ -76,11 +75,22 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
     # xAI
     # ------------------------------------------------------------------------
 
-    "SuperGrok-4.7": {
+    "SuperGrok-4.8": {
         "provider": "xai",
         "policy": "strict daily use",
         "role": "main_daily",
         "enabled": True,
+        "modalities": ["text"],
+        "execution_status": "adapter_unbound",
+    },
+
+    "Grok-4.8": {
+        "provider": "xai",
+        "policy": "strict fallback",
+        "role": "fallback_candidate",
+        "enabled": True,
+        "modalities": ["text"],
+        "execution_status": "adapter_unbound",
     },
 
     "Grok-4.7": {
@@ -94,18 +104,22 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
     # OpenAI
     # ------------------------------------------------------------------------
 
-    "GPT-6.1-Luna": {
+    "GPT-6.1-Terra": {
         "provider": "openai",
         "policy": "strict daily use",
-        "role": "fast_difficult_tasks",
+        "role": "preferred_openai_text_and_voice",
         "enabled": True,
+        "modalities": ["text", "voice"],
+        "execution_status": "adapter_unbound",
     },
 
+    # Compatibility alias only; new routing selects GPT-6.1-Terra.
     "GPT-6-Terra": {
         "provider": "openai",
-        "policy": "strict daily use",
-        "role": "difficult_tasks",
-        "enabled": True,
+        "policy": "compatibility alias",
+        "role": "deprecated_alias",
+        "enabled": False,
+        "alias_for": "GPT-6.1-Terra",
     },
 
     "GPT-6.1-Sol": {
@@ -217,8 +231,9 @@ ROUTING_POLICY: Dict[str, Any] = {
     ),
 
     "defaults": {
-        "primary_model": "SuperGrok-4.7",
+        "primary_model": "SuperGrok-4.8",
         "fallback_model": "Grok-4.7",
+        "openai_model": "GPT-6.1-Terra",
         "heavy_judge": "SuperGrok-5.7-hybrid",
         "use_judge": True,
     },
@@ -311,7 +326,7 @@ ROUTING_POLICY: Dict[str, Any] = {
         "low_risk": {
             "prefer": "fastest",
             "models": [
-                "SuperGrok-4.7",
+                "SuperGrok-4.8",
             ],
         },
 
@@ -319,7 +334,7 @@ ROUTING_POLICY: Dict[str, Any] = {
             "prefer": "balanced",
             "models": [
                 "SuperGrok-4.7",
-                "GPT-6-Luna",
+                "GPT-6.1-Terra",
                 "GPT-5.7-Codex-Cyber",
                 "Claude-Sonnet-5.5",
                 "Claude-Opus-5.5",
@@ -345,7 +360,7 @@ ROUTING_POLICY: Dict[str, Any] = {
         "local_models": [
             "Grok-4.7",
             "DevAssist420 + Sovereignty AI Hybrid",
-            "GPT-5.6-Luna",
+            "GPT-6.1-Terra",
         ],
     },
 }
@@ -456,6 +471,8 @@ class RoutingDecision:
     risk_categories: List[str]
     use_judge: bool
     reason: str
+    modality: str = "text"
+    provider_preference: str = "default"
 
 
 # ============================================================================
@@ -916,7 +933,14 @@ class ChainOfCommandRouter:
         request: str,
         context: str,
         risk_score: float,
+        modality: str = "text",
+        provider_preference: str = "default",
     ) -> str:
+
+        if modality not in {"text", "voice"}:
+            raise ValueError("modality must be 'text' or 'voice'")
+        if provider_preference not in {"default", "openai", "xai"}:
+            raise ValueError("provider_preference must be 'default', 'openai', or 'xai'")
 
         request_lower = request.lower()
 
@@ -968,10 +992,19 @@ class ChainOfCommandRouter:
 
         # Medium-risk reasoning.
         if risk_score >= 0.60:
-            return "GPT-6-Luna"
+            return "GPT-6.1-Terra"
+
+        # Explicit OpenAI lane: Terra is selected for both text and voice.
+        # This is routing metadata; a real authorized provider adapter is
+        # still required before execution can be reported as successful.
+        if provider_preference == "openai":
+            return "GPT-6.1-Terra"
+
+        if provider_preference == "xai":
+            return "SuperGrok-4.8"
 
         # Main daily model.
-        return "SuperGrok-4.7"
+        return "SuperGrok-4.8"
 
     # ------------------------------------------------------------------------
     # COUNCIL SELECTION
@@ -993,14 +1026,14 @@ class ChainOfCommandRouter:
         add(primary_model)
 
         # Grok adversarial lane.
-        add("SuperGrok-4.7")
+        add("SuperGrok-4.8")
 
         # GPT reasoning/code lane.
         if context == "security":
             add("GPT-DayBreak-Red-latest")
             add("GPT-5.7-Codex-Cyber")
         else:
-            add("GPT-6-Luna")
+            add("GPT-6.1-Terra")
 
         # Claude lane.
         if context == "medical":
@@ -1050,6 +1083,8 @@ class ChainOfCommandRouter:
         self,
         request: str,
         supplied_context: str = "",
+        modality: str = "text",
+        provider_preference: str = "default",
     ) -> RoutingDecision:
 
         context = self.classify_context(
@@ -1066,6 +1101,8 @@ class ChainOfCommandRouter:
             request,
             context,
             risk_score,
+            modality=modality,
+            provider_preference=provider_preference,
         )
 
         council_models = self.build_council(
@@ -1095,6 +1132,8 @@ class ChainOfCommandRouter:
             ),
             use_judge=use_judge,
             reason=reason,
+            modality=modality,
+            provider_preference=provider_preference,
         )
 
     # ------------------------------------------------------------------------
@@ -1285,6 +1324,9 @@ def main() -> int:
         "",
     ).strip()
 
+    modality = get_argument(4, "text").strip().lower() or "text"
+    provider_preference = get_argument(5, "default").strip().lower() or "default"
+
     evidence = LocalEvidenceLog(
         evidence_path or None
     )
@@ -1303,6 +1345,8 @@ def main() -> int:
         routing = router.route(
             request=request,
             supplied_context=supplied_context,
+            modality=modality,
+            provider_preference=provider_preference,
         )
 
         # ------------------------------------------------------------
@@ -1395,7 +1439,9 @@ def main() -> int:
         )
 
         response = {
-            "ok": True,
+            # A successful routing decision is not successful provider execution.
+            "ok": bool(execution_status["executed"]),
+            "status": "EXECUTED" if execution_status["executed"] else "EXECUTION_BLOCKED",
 
             "request": request,
 
@@ -1407,6 +1453,8 @@ def main() -> int:
                 "council_models": routing.council_models,
                 "use_judge": routing.use_judge,
                 "reason": routing.reason,
+                "modality": routing.modality,
+                "provider_preference": routing.provider_preference,
             },
 
             "execution": execution_status,
