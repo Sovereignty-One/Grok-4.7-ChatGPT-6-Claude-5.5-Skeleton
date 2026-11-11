@@ -1,0 +1,40 @@
+{
+  "manifest_type": "sovereignty-ownership-manifest",
+  "manifest_version": "1.0.0",
+  "status": "PRELIMINARY_NOT_AUTHORITY_VERIFIED",
+  "license": {
+    "name": "SOVEREIGNTY LICENSE",
+    "version": "2.2.2",
+    "artifact_path": "LICENSES/SOVEREIGNTY-LICENSE-2.2.2.md",
+    "document_digest_algorithm": "SHA3-512",
+    "document_digest": "3582a05e9f423149044a91fc354cc7faa2c4c4816e4e222f0b5795c2dc14597afbd6b6b7ded2a02a7987083ad423bedd9b5472f7ce34a6d238c0ebc5900c4ead"
+  },
+  "repository": {
+    "name": "Grok-4.7-ChatGPT-6.1-Claude-5.5-Skeleton",
+    "url": "https://github.com/AppelJr/Grok-4.7-ChatGPT-6.1-Claude-5.5-Skeleton",
+    "default_branch": "main",
+    "existing_root_license_observation": "EXISTING_GPL_3.0"
+  },
+  "ownership": {
+    "licensor": null,
+    "authority_verified": false,
+    "verification_evidence": []
+  },
+  "covered_materials": [],
+  "excluded_materials": [
+    "All repository contents pending file-level authorship, ownership, contribution, and upstream-license review."
+  ],
+  "third_party_inventory": {
+    "status": "NOT_AUDITED",
+    "dependencies": null,
+    "notices_preserved": true
+  },
+  "commercial_authorization": {
+    "enabled": false,
+    "schedule": null
+  },
+  "version_history": {
+    "previous_version": null,
+    "previous_digest": null
+  }
+}
