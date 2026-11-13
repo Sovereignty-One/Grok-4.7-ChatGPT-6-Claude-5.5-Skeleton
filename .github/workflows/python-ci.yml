@@ -2,16 +2,16 @@ name: Python CI
 
 on:
   push:
-    branches: [ dev ]
+    branches: [ "main", "devassist420" ]
   pull_request:
-    branches: [ dev ]
+    branches: [ "main", "devassist420" ]
 
 permissions:
   contents: read
 
 jobs:
   test:
-    runs-on: [self-hosted, linux, arm64]
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -20,7 +20,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.14'
 
       - name: Install dependencies
         run: |
@@ -28,11 +28,11 @@ jobs:
           pip install ruff mypy pytest
 
       - name: Lint
-        continue-on-error: true
+        continue-on-error: false
         run: ruff check .
 
       - name: Type check
-        continue-on-error: true
+        continue-on-error: false
         run: mypy .
 
       - name: Run tests
